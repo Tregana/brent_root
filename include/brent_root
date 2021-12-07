@@ -1,0 +1,161 @@
+/* vim: set filetype=cpp: */
+#ifndef TREGANA_BRENT_ROOT
+#define TREGANA_BRENT_ROOT
+#include <functional>
+#include <utility>
+#include <cmath>
+#include <cfloat>
+#include <type_traits>
+#include <algorithm>
+namespace tregana {
+
+template<typename Float, typename std::enable_if_t<std::is_floating_point_v<Float>, int> = 0>
+Float brent_root(std::function<Float(Float)>f, std::pair<Float, Float> interval, Float&tolerance)
+{
+  using domain        = Float;
+  using delta_domain  = Float;
+  using image         = Float;
+  using delta_image   = Float;
+  using container     = std::pair<domain, image>;
+
+  delta_image                             tolerance_;
+  std::pair<delta_domain, delta_domain>   step_;
+  std::array<container, 3>                container_;
+  std::array<image, 4>                    interpolation_;
+
+  auto evaluate = [&f] (domain x) -> container 
+  { 
+    return std::make_pair(x, f(x));
+  };
+  auto existence = [&container_] (int i, int k) -> bool
+  { 
+    return std::signbit(container_[i].second) 
+    xor    std::signbit(container_[k].second);
+  };
+  auto interpolate = [&interpolation_] (const std::array<container, 3> &x
+                                      , const delta_domain             Step
+                                      , const delta_image              Tol) 
+      -> bool
+  {
+    interpolation_[3] = x[1].second 
+                      / x[0].second;
+
+    if (x[0].first == x[2].first)
+    {
+      interpolation_[0] = interpolation_[3]
+                        * 2.0 * Step; 
+      interpolation_[1] = 1.0 - interpolation_[3];
+    }
+    else
+    {
+      interpolation_[1] = x[0].second
+                        / x[2].second; 
+
+      interpolation_[0] = interpolation_[1]
+                        * 2.0 * Step;
+
+      interpolation_[2] = x[1].second
+                        / x[2].second; 
+
+      interpolation_[0]*= interpolation_[1] 
+                        - interpolation_[2];
+
+      interpolation_[0]-= (x[1].first - x[0].first) 
+                        * (interpolation_[2] - 1.0);
+
+      interpolation_[0]*= interpolation_[3]; 
+
+      interpolation_[1] = (interpolation_[1] - 1.0) 
+                        * (interpolation_[2] - 1.0) 
+                        * (interpolation_[3] - 1.0); 
+    }
+    if (std::signbit(interpolation_[0]))
+    {
+      interpolation_[0] = -interpolation_[0];
+    }
+    else
+    {
+      interpolation_[1] = -interpolation_[1];
+    }
+    return 2.0 * interpolation_[0] 
+        <  3.0 * interpolation_[1] * Step
+               - fabs(Tol * interpolation_[1]);
+  };
+
+  container_[0] = evaluate(interval.first);
+  container_[1] = evaluate(interval.second);
+  container_[2] = container_[0];
+
+  step_.first = container_[1].first - container_[0].first;
+
+  if (container_[0].second == 0.0)
+  { 
+    tolerance = 0.0; 
+    return container_[0].first; 
+  }
+  if (container_[1].second == 0.0)
+  { 
+    tolerance = 0.0; 
+    return container_[1].first;
+  }
+  if (not existence(0, 1))
+  {
+    throw std::runtime_error("ensure existance, please"); 
+  }
+
+  for (int iteration_{9999}; iteration_; --iteration_)
+  {
+    step_.first = container_[1].first 
+                - container_[0].first;
+
+    if (fabs(container_[2].second) 
+      < fabs(container_[1].second))
+    {
+      container_[0] = container_[1];
+      container_[1] = container_[2];
+      container_[2] = container_[0]; 
+    }
+
+    tolerance_  = 2.0 * DBL_EPSILON * fabs(container_[1].first) 
+                + 0.5 * tolerance; 
+    step_.second = 0.5 
+                 * (container_[2].first - container_[1].first); 
+
+    if (fabs(step_.second) <= tolerance_ 
+    or  container_[1].second == 0.0)
+        break;
+
+    if (fabs(step_.first) >= tolerance_ 
+    and fabs(container_[0].second) > fabs(container_[1].second))
+    {
+      if (interpolate(container_, step_.second, tolerance_)
+      and 2.0 * interpolation_[0] < fabs(step_.first * interpolation_[1]))
+      { 
+        step_.second = interpolation_[0]
+                     / interpolation_[1]; 
+      }
+      else
+      {
+        step_.second = step_.first
+                     = 0.5 
+                     * (container_[2].first - container_[1].first); 
+      }
+    }
+    if (fabs(step_.second) < tolerance_)
+    {
+      step_.second = std::signbit(step_.second) 
+                   ? -tolerance_ 
+                   :  tolerance_;
+    }
+
+    container_[0] = container_[1]; 
+    container_[1] = evaluate(container_[1].first + step_.second);
+
+    if (not existence(1, 2))
+      container_[2] = container_[0];
+  }
+  tolerance = fabs(container_[2].first - container_[1].first);
+  return container_[1].first;
+}
+}//namespace tregana
+#endif//TREGANA_BRENT_ROOT
